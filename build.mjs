@@ -19,13 +19,23 @@ async function get(url) { // 4 попытки: сайт иногда кратк�
 }
 const sm = await get(SITE + '/sitemap.xml');
 const urls = [...sm.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1]).filter(u => /\/blog\/[^/]+$/.test(u));
+// Даты из уже опубликованного фида: сразу после публикации во Framer страницы
+// какое-то время отдаются без JSON-LD с datePublished.
+const prev = new Map([...(await get(SELF)).matchAll(/<link>([^<]+)<\/link>\s*<guid[^>]*>[^<]*<\/guid>\s*<pubDate>([^<]+)<\/pubDate>/g)].map(m => [m[1], m[2]]));
 const items = [];
 for (const url of urls) {
-  const h = await get(url);
-  const date = (h.match(/"datePublished":"([^"]+)"/) || [])[1];
-  const title = meta(h, 'og:title').replace(/\s*\|\s*FOCUS\s*$/, '');
-  if (!title || !date) console.log(`пропущено: ${url} (title ${!!title}, date ${!!date})`);
-  if (title && date) items.push({ url, title, date: new Date(date), desc: meta(h, 'og:description'), image: meta(h, 'og:image').split('?')[0] });
+  let h = '', date, title;
+  for (let i = 1; i <= 3; i++) {
+    h = await get(url);
+    date = (h.match(/"datePublished":"([^"]+)"/) || [])[1];
+    title = meta(h, 'og:title').replace(/\s*\|\s*FOCUS\s*$/, '');
+    if (date && title) break;
+    if (i < 3) await sleep(10000);
+  }
+  if (!date && prev.has(url)) { date = prev.get(url); console.log(`дата из прошлого фида: ${url}`); }
+  if (!date && title) { date = new Date().toISOString().slice(0, 10); console.log(`дата не найдена, ставлю сегодня: ${url}`); }
+  if (!title) { console.log(`пропущено (нет заголовка): ${url}`); continue; }
+  items.push({ url, title, date: new Date(date), desc: meta(h, 'og:description'), image: meta(h, 'og:image').split('?')[0] });
 }
 if (items.length < 5) throw new Error(`Слишком мало статей: ${items.length}`); // не затираем фид при сбое сайта
 items.sort((a, b) => b.date - a.date);
