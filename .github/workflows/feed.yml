@@ -15,12 +15,31 @@ jobs:
     runs-on: ubuntu-latest
     environment: { name: github-pages, url: '${{ steps.deploy.outputs.page_url }}' }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22 }
       - run: node build.mjs
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      # Выкладываем только если фид изменился: по расписанию обычно ничего нового нет,
+      # а каждая лишняя выкладка – шанс поймать сбой GitHub Pages.
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && curl -sfL "https://focus-uz.github.io/focus-feed/rss.xml" -o live.xml && cmp -s live.xml public/rss.xml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "Фид не изменился – выкладка не нужна"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.diff.outputs.changed == 'true'
+        uses: actions/configure-pages@v6
+      - if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v5
         with: { path: public }
       - id: deploy
-        uses: actions/deploy-pages@v4
+        if: steps.diff.outputs.changed == 'true'
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+      # Повтор при кратковременном сбое GitHub («Fetching artifact metadata failed»)
+      - if: steps.diff.outputs.changed == 'true' && steps.deploy.outcome == 'failure'
+        run: sleep 60
+      - id: deploy_retry
+        if: steps.diff.outputs.changed == 'true' && steps.deploy.outcome == 'failure'
+        uses: actions/deploy-pages@v5
